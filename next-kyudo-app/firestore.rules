@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // ヘルパー関数（権限チェック用の共通ロジック）
+    // ==========================================
+
+    // 1. ログイン（匿名認証含む）しているか
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // 2. 対象のデータが「自分自身」のものか
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 3. アクセスしているユーザーが「管理者(admin)」か
+    // usersコレクションの該当ドキュメントを読みに行き、roleがadminか判定する
+    function isAdmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ==========================================
+    // コレクションごとのアクセスルール
+    // ==========================================
+
+    // 1. users コレクション (システム利用者・通知先)
+    match /users/{userId} {
+      // 読み取り: 自分のデータのみ。管理者は全員分読める。
+      allow read: if isOwner(userId) || isAdmin();
+      // 作成: 自分のデータとしてのみ作成可能。
+      allow create: if isOwner(userId);
+      // 更新: 自分のデータのみ（FCMトークンや選択チームの変更）。管理者は編集可能。
+      allow update: if isOwner(userId) || isAdmin();
+      // 削除: 管理者のみ可能。
+      allow delete: if isAdmin();
+    }
+
+    // 2. teams コレクション (チーム・団体)
+    match /teams/{teamId} {
+      // 読み取り: アプリを利用する全員（画面のプルダウン等に表示するため）
+      allow read: if true;
+      // 書き込み（作成・更新・削除）: 大会運営(管理者)のみ
+      allow write: if isAdmin();
+    }
+
+    // 3. participants コレクション (参加選手)
+    match /participants/{participantId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 4. tachis コレクション (立ち・試合進行キュー) ★最重要
+    match /tachis/{tachiId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 5. scores コレクション (的中記録)
+    match /scores/{scoreId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

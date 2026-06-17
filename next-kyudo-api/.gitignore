@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+.env
+
+# VS Code
+.vscode/
+
+# Python 仮想環境
+venv/
+__pycache__/
+
+# Firebase 秘密鍵（絶対にPushしないこと！）
+serviceAccountKey.json

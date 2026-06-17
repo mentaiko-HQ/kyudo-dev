@@ -1,0 +1,29 @@
+# ==========================================
+# フロントエンド (next-kyudo-app) 用の除外設定
+# ==========================================
+next-kyudo-app/node_modules/
+next-kyudo-app/.next/
+next-kyudo-app/out/
+next-kyudo-app/build/
+next-kyudo-app/.env.local
+next-kyudo-app/.env.development.local
+next-kyudo-app/.env.test.local
+next-kyudo-app/.env.production.local
+
+# ==========================================
+# バックエンド (next-kyudo-api) 用の除外設定
+# ==========================================
+next-kyudo-api/venv/
+next-kyudo-api/__pycache__/
+next-kyudo-api/.pytest_cache/
+next-kyudo-api/*.pyc
+
+# ★絶対にGitHubに上げてはいけないFirebaseの秘密鍵
+next-kyudo-api/serviceAccountKey.json
+
+# ==========================================
+# 共通・OS用の除外設定
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
