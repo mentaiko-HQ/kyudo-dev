@@ -1,27 +1,13 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import { db, auth } from '@/lib/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  writeBatch,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
-import { Tachi } from '@/types';
+import React, { useEffect, useState } from "react";
+import { db, auth } from "@/lib/firebase";
+import { collection, query, orderBy, onSnapshot, doc, writeBatch, serverTimestamp } from "firebase/firestore";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { Tachi } from "@/types";
 
 export default function AdminDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -35,25 +21,19 @@ export default function AdminDashboardPage() {
     });
 
     // tachisコレクションを立ち番号順にリアルタイム取得
-    const q = query(collection(db, 'tachis'), orderBy('tachiNumber', 'asc'));
-    const unsubscribeDb = onSnapshot(
-      q,
-      (snapshot) => {
-        const tachiData = snapshot.docs.map((doc) => ({
-          ...doc.data(),
-          id: doc.id,
-        })) as Tachi[];
-        setTachis(tachiData);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Firestore error:', error);
-        toast.error(
-          'データの取得に失敗しました。管理者権限がない可能性があります。',
-        );
-        setLoading(false);
-      },
-    );
+    const q = query(collection(db, "tachis"), orderBy("tachiNumber", "asc"));
+    const unsubscribeDb = onSnapshot(q, (snapshot) => {
+      const tachiData = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Tachi[];
+      setTachis(tachiData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore error:", error);
+      toast.error("データの取得に失敗しました。管理者権限がない可能性があります。");
+      setLoading(false);
+    });
 
     return () => {
       unsubscribeAuth();
@@ -61,53 +41,79 @@ export default function AdminDashboardPage() {
     };
   }, []);
 
-  // 2. 次の立ちへ進める（ステータス更新）処理
+  // 2. 次の立ちへ進める（ステータス更新）＆ プッシュ通知送信処理
   const handleNextTachi = async () => {
     if (!currentUser) return;
 
     // 現在「active」な立ちと、次に「waiting」な立ちを探す
-    const currentActiveIndex = tachis.findIndex((t) => t.status === 'active');
-    const nextWaitingIndex = tachis.findIndex(
-      (t, index) => t.status === 'waiting' && index > currentActiveIndex,
-    );
+    const currentActiveIndex = tachis.findIndex(t => t.status === "active");
+    const nextWaitingIndex = tachis.findIndex((t, index) => t.status === "waiting" && index > currentActiveIndex);
 
     const batch = writeBatch(db);
 
     // 現在の立ちを終了にする
     if (currentActiveIndex !== -1) {
       const currentTachi = tachis[currentActiveIndex];
-      const currentRef = doc(db, 'tachis', currentTachi.id);
-      batch.update(currentRef, {
-        status: 'finished',
-        updatedAt: serverTimestamp(),
-      });
+      const currentRef = doc(db, "tachis", currentTachi.id);
+      batch.update(currentRef, { status: "finished", updatedAt: serverTimestamp() });
     }
 
     // 次の立ちを試合中にする
     if (nextWaitingIndex !== -1) {
       const nextTachi = tachis[nextWaitingIndex];
-      const nextRef = doc(db, 'tachis', nextTachi.id);
-      batch.update(nextRef, { status: 'active', updatedAt: serverTimestamp() });
+      const nextRef = doc(db, "tachis", nextTachi.id);
+      batch.update(nextRef, { status: "active", updatedAt: serverTimestamp() });
+      
+      // =========================================================
+      // ★ 呼出通知の送信処理 (バックエンドAPIを叩く)
+      // =========================================================
+      // 今回は「2つ先」の立ちを呼び出す
+      const notifyTargetIndex = nextWaitingIndex + 2; 
 
-      // ★ ここで「2つ先（nextWaitingIndex + 2）」の立ちのチームIDを取得し、
-      // バックエンドAPIを呼び出してFCMプッシュ通知を送信する処理を後ほど追加します。
-      const notifyTargetIndex = nextWaitingIndex + 2;
       if (notifyTargetIndex < tachis.length) {
-        toast.info(
-          `システムログ: 第${tachis[notifyTargetIndex].tachiNumber}立のチームへ呼出通知を送信します（実装予定）`,
-        );
+        const targetTachi = tachis[notifyTargetIndex];
+        
+        try {
+          // バックエンド(FastAPI)の通知APIへリクエストを送信
+          const response = await fetch("http://localhost:8000/api/notify/call-teams", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            // APIに送る手紙の中身（対象チームの配列と、表示する立ち番号）
+            body: JSON.stringify({
+              teamIds: targetTachi.teamIds,
+              tachiNumber: targetTachi.tachiNumber,
+            }),
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            if (result.notifiedCount > 0) {
+              toast.success(`第${targetTachi.tachiNumber}立の呼出通知を送信しました（送信成功: ${result.notifiedCount}端末）`);
+            } else {
+              toast.info(`第${targetTachi.tachiNumber}立の通知先が見つかりませんでした（チーム登録者がいません）`);
+            }
+          } else {
+            console.error("API error:", await response.text());
+            toast.error("通知の送信に失敗しました。");
+          }
+        } catch (error) {
+          console.error("Fetch error:", error);
+          toast.error("バックエンドサーバー(FastAPI)に接続できませんでした。起動しているか確認してください。");
+        }
       }
     } else {
-      toast.success('すべての立ちが終了しました！');
+      toast.success("すべての立ちが終了しました！");
       return;
     }
 
+    // Firestoreのデータを更新（画面の見た目が切り替わる）
     try {
       await batch.commit();
-      toast.success('進行状況を更新しました。');
     } catch (error) {
-      console.error('Update failed:', error);
-      toast.error('更新に失敗しました。');
+      console.error("Update failed:", error);
+      toast.error("状態の更新に失敗しました。");
     }
   };
 
@@ -115,22 +121,29 @@ export default function AdminDashboardPage() {
   const initializeDummyData = async () => {
     try {
       const batch = writeBatch(db);
-      for (let i = 1; i <= 5; i++) {
-        const ref = doc(collection(db, 'tachis'));
+      for (let i = 1; i <= 6; i++) {
+        const ref = doc(collection(db, "tachis"));
+        
+        // ★ 通知テストのため、全立ちの中に「test_team_1」を紛れ込ませます。
+        // 第3立にはチームを4つ設定してみます。
+        let teams = [`dummy_team_${i}A`, `dummy_team_${i}B`];
+        if (i === 3) teams = ["test_team_1", "dummy_team_3B", "dummy_team_3C", "dummy_team_3D"];
+        if (i === 4) teams = ["test_team_1", "dummy_team_4B"];
+
         batch.set(ref, {
           id: ref.id,
           tachiNumber: i,
-          roundName: '予選',
-          teamIds: [`dummy_team_${i}A`, `dummy_team_${i}B`],
-          status: i === 1 ? 'active' : 'waiting', // 1立目だけ最初から進行中
-          updatedAt: serverTimestamp(),
+          roundName: "予選",
+          teamIds: teams,
+          status: i === 1 ? "active" : "waiting", // 1立目だけ最初から進行中
+          updatedAt: serverTimestamp()
         });
       }
       await batch.commit();
-      toast.success('ダミーデータを生成しました！');
+      toast.success("ダミーデータを生成しました！");
     } catch (error) {
-      console.error('Init failed:', error);
-      toast.error('ダミーデータの生成に失敗しました。');
+      console.error("Init failed:", error);
+      toast.error("ダミーデータの生成に失敗しました。");
     }
   };
 
@@ -141,12 +154,8 @@ export default function AdminDashboardPage() {
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="flex justify-between items-end pb-4 border-b">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              大会進行ダッシュボード
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              現在の立ちの管理と自動呼出のコントロール
-            </p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">大会進行ダッシュボード</h1>
+            <p className="text-muted-foreground mt-1">現在の立ちの管理と自動呼出のコントロール</p>
           </div>
           {tachis.length === 0 && (
             <Button onClick={initializeDummyData} variant="outline">
@@ -159,16 +168,10 @@ export default function AdminDashboardPage() {
         <Card className="border-blue-200 shadow-sm">
           <CardHeader className="bg-blue-50/50 pb-4">
             <CardTitle className="text-lg">進行コントロール</CardTitle>
-            <CardDescription>
-              次の立ちを開始すると、2つ後の立ちのチームへ自動で呼出通知が飛びます。
-            </CardDescription>
+            <CardDescription>次の立ちを開始すると、2つ後の立ちのチームへ自動で呼出通知が飛びます。</CardDescription>
           </CardHeader>
           <CardContent className="pt-4 flex gap-4">
-            <Button
-              onClick={handleNextTachi}
-              className="flex-1 h-12 text-lg font-bold"
-              disabled={tachis.length === 0}
-            >
+            <Button onClick={handleNextTachi} className="flex-1 h-12 text-lg font-bold" disabled={tachis.length === 0}>
               次の立ちへ進める (試合開始)
             </Button>
           </CardContent>
@@ -178,62 +181,36 @@ export default function AdminDashboardPage() {
         <div className="space-y-3 mt-8">
           <h2 className="text-xl font-bold mb-4">立ち一覧（タイムライン）</h2>
           {tachis.map((tachi) => (
-            <Card
-              key={tachi.id}
+            <Card 
+              key={tachi.id} 
               className={`transition-all ${
-                tachi.status === 'active'
-                  ? 'border-2 border-blue-500 shadow-md bg-blue-50/30'
-                  : tachi.status === 'finished'
-                    ? 'opacity-60 bg-slate-100'
-                    : ''
+                tachi.status === 'active' ? 'border-2 border-blue-500 shadow-md bg-blue-50/30' : 
+                tachi.status === 'finished' ? 'opacity-60 bg-slate-100' : ''
               }`}
             >
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div
-                    className={`flex items-center justify-center w-12 h-12 rounded-full font-bold text-lg ${
-                      tachi.status === 'active'
-                        ? 'bg-blue-600 text-white'
-                        : tachi.status === 'finished'
-                          ? 'bg-slate-300 text-slate-600'
-                          : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
+                  <div className={`flex items-center justify-center w-12 h-12 rounded-full font-bold text-lg ${
+                    tachi.status === 'active' ? 'bg-blue-600 text-white' : 
+                    tachi.status === 'finished' ? 'bg-slate-300 text-slate-600' : 'bg-slate-200 text-slate-700'
+                  }`}>
                     {tachi.tachiNumber}
                   </div>
                   <div>
-                    <p className="font-bold text-lg">
-                      {tachi.roundName} 第{tachi.tachiNumber}立
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      割当: {tachi.teamIds.join(', ')}
-                    </p>
+                    <p className="font-bold text-lg">{tachi.roundName} 第{tachi.tachiNumber}立</p>
+                    <p className="text-sm text-muted-foreground">割当: {tachi.teamIds.join(", ")}</p>
                   </div>
                 </div>
                 <div>
-                  {tachi.status === 'active' && (
-                    <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold animate-pulse">
-                      試合中
-                    </span>
-                  )}
-                  {tachi.status === 'waiting' && (
-                    <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-sm font-medium">
-                      待機中
-                    </span>
-                  )}
-                  {tachi.status === 'finished' && (
-                    <span className="px-3 py-1 bg-slate-200 text-slate-500 rounded-full text-sm font-medium">
-                      終了
-                    </span>
-                  )}
+                  {tachi.status === 'active' && <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-bold animate-pulse">試合中</span>}
+                  {tachi.status === 'waiting' && <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-sm font-medium">待機中</span>}
+                  {tachi.status === 'finished' && <span className="px-3 py-1 bg-slate-200 text-slate-500 rounded-full text-sm font-medium">終了</span>}
                 </div>
               </CardContent>
             </Card>
           ))}
           {tachis.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">
-              立ちデータがありません。「ダミーデータを生成」を押してください。
-            </p>
+            <p className="text-center text-muted-foreground py-8">立ちデータがありません。「ダミーデータを生成」を押してください。</p>
           )}
         </div>
       </div>
